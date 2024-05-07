@@ -1,67 +1,568 @@
 ---
-title: "Peaks and Primes"
+title: "Peaks and Primes: Investigating an Olympic Athlete's Performance Progression in Athletics"
 output:
-  html_document:
-    df_print: paged
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = F,  warning = F, message = T)
+
+#  load necessary packages and set theme style and color
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load(tidyverse, tidymodels, censored, ggsurvfit, patchwork)
+theme_set(theme_bw())
+theme_color <- "#d5c46c"
 ```
 
-
-### Prelude 
+### <span style="color: `r theme_color`;">Prelude</span>
 With Olympic Games occurring once every 4 years, athletes have a limited window of opportunity to participate. 
 **David Awosoga** and **Matthew Chow** analyze historical performance data in athletics to understand athlete progressions and the factors that impact the size and timing of peak performance windows.
 
-### Bios
-*David Awosoga* is a graduate student at the University of Waterloo researching sports analytics and Bayesian spatiotemporal data analysis.
+### <span style="color: `r theme_color`;">Bios</span>
+*[David Awosoga](mailto:david.awosoga@uwaterloo.ca)* is a graduate student at the University of Waterloo researching sports analytics and Bayesian spatiotemporal data analysis.
 
 <!-- insert photo here -->
 
-*Matthew Chow* is an undergraduate student at the University of Waterloo interested in the application of statistical methods to physiology and the social sciences.
+*[Matthew Chow](mailto:mc2chow@uwaterloo.ca)* is an undergraduate student at the University of Waterloo interested in the application of statistical methods to physiology and the social sciences.
 
 <!-- insert photo here -->
 
-### Introduction
-In the world of athletics, also known as “track and field”, athletes meticulously train to capture the most of their genetic potential in their specified event discipline, with the hopes of achieving success at the highest level of competition. Throughout an athlete’s career, performances generally follow a parabolic trajectory, reaching a maximum value at some point in their career and trending in the opposite direction for the remainder of it. This is known as a “peak” - the time interval at which an athlete achieves their lifetime best performances. The length of this interval, commonly referred to as an athlete’s “prime”, illustrates how long a peak is achievable for. This length is incredibly variable and context dependent, but in the world of athletics and competitive sport in general, an athlete’s peak is [constrained almost exclusively by their age](https://www.cairn.info/revue-gerontologie-et-societe-2012-5-page-41.htm). Therefore, an athlete’s success is not only constrained by their level of technical maturity in an event, but also by the age at which they reach the level of expertise necessary to compete with the world’s best. This has massive implications for track and field athletes in particular, as the Olympics serve as their largest stage of global competition, but only occur once every 4 years.
+### <span style="color: `r theme_color`;">Introduction</span>
+In the world of athletics, also known as “track and field”, athletes meticulously train to capture the most of their genetic potential in their specified event discipline, with the hopes of achieving success at the highest level of competition. Throughout an athlete’s career, performances generally follow a parabolic trajectory, reaching a maximum value at some point in their career and trending in the opposite direction for the remainder of it. 
+This is known as a “peak” - the time interval at which an athlete achieves their lifetime best performances. 
+The length of this interval, commonly referred to as an athlete’s “prime”, illustrates how long a peak is achievable for. This length is incredibly variable and context dependent, but in the world of athletics and competitive sport in general, an athlete’s peak is [constrained almost exclusively by their age](https://www.cairn.info/revue-gerontologie-et-societe-2012-5-page-41.htm). Therefore, an athlete’s success is not only constrained by their level of technical maturity in an event, but also by the age at which they reach the level of expertise necessary to compete with the world’s best. 
+This has massive implications for track and field athletes in particular, as the Olympics serve as their largest stage of global competition, but only occur once every 4 years.
 
-### You (may) Only Get One Shot
-In fact, according to [data extracted from Olympedia.org](https://github.com/chanronnie/Olympics/tree/main), since the first Olympics in 1896, 71% of athletics competitors have participated in one Games, and only 8% have competed in more than 2 Games (not accounting for active athletes who have made one Games and can still qualify for more in the future). Therefore, understanding the terminal window of this progression can provide valuable information to optimize training regimes and maximize an athlete’s opportunity to qualify. Additionally, a deep dive into the physiological and event-specific patterns in athletes validates some intuition and challenges other underlying assumptions about their contributing implications. In terms of technical maturation, the rate of performance progression in athletes over time can provide valuable context to discover the presence of systematic changes within the sport at large. However, performance isn’t the only factor that determines an athlete’s ability to compete at an Olympic Games, and there are other external constraints that must be considered.
+### <span style="color: `r theme_color`;">You (may) Only Get One Shot</span>
+```{r get_athlete_data, include=FALSE}
+# get historical athlete data from Olympedia
+athletes <- read_csv(url("https://github.com/chanronnie/Olympics/raw/main/data/athletes.csv"), show_col_types = F)
+```
+In fact, according to [data extracted from Olympedia.org](https://github.com/chanronnie/Olympics/tree/main), since the first Olympics in 1896, `r athletes %>% filter(sport == "Athletics", str_detect(game, "[0-9]+ Summer Olympics")) %>% distinct(game, name) %>% count(name) %>% summarise(one_games = round(mean(n == 1)*100)) %>% pull()`% of athletics competitors have participated in one Games, and only `r athletes %>% filter(sport == "Athletics", str_detect(game, "[0-9]+ Summer Olympics")) %>% distinct(game, name) %>% count(name) %>% summarise(one_games = round(mean(n > 2)*100)) %>% pull()`% have competed in more than 2 Games (not accounting for active athletes who have made one Games and can still qualify for more in the future). 
+Therefore, understanding the terminal window of this progression can provide valuable information to optimize training regimes and maximize an athlete’s opportunity to qualify. 
+Additionally, a deep dive into the physiological and event-specific patterns in athletes validates some intuition and challenges other underlying assumptions about their contributing implications. In terms of technical maturation, the rate of performance progression in athletes over time can provide valuable context to discover the presence of systematic changes within the sport at large. 
+However, performance isn’t the only factor that determines an athlete’s ability to compete at an Olympic Games, and there are other external constraints that must be considered.
 
 For the Paris 2024 Olympics, half of the total qualification places are reserved for athletes who achieve their events’ entry standard, a predetermined performance threshold based loosely on the marks achieved by previous finalists. These standards are intended to be quite steep, such as a 2 hours and 8 minute requirement in the men’s Marathon and a 4 minute and 21 second Mile equivalent standard in the women’s 1500m. Unfortunately, achieving a qualification standard does not guarantee participation, as each National Olympic Committee (NOC) is permitted to send a maximum of 3 participants for individual events, and 1 relay team per event. Therefore, NOCs with more than 3 athletes who achieve a qualification standard must devise other ways to determine which will actually be sent to the Olympics, and many host a National Championships Meet before the Olympics for this reason. The other half of Olympic qualifying places are awarded via a points-based rankings system. Additional considerations for athlete participants are made for the host country, and nominations can be put forward by NOCs with no individually qualified athlete or relay team. There is also a system to redistribute whatever unused quota places remain, and alternate athletes for relay teams may also receive consideration. Therefore, although there has been an increase in event offerings, the total number of participating athletes has remained relatively unchanged since 1996.
+```{r}
+# table of athlete participation
+athlete_participation <- 
+athletes %>% filter(sport == "Athletics") %>% 
+  distinct(game, name) %>% count(game, name = "number_of_athletes") %>% 
+  filter(game %in% paste(seq(1996, 2020, 4), "Summer Olympics"))
 
-### Data
-The data for this analysis comes courtesy of [World Athletics ](https://worldathletics.org), the world governing authority for athletics. Complete event results from the past 7 Olympic games - from Atlanta 1996 to Tokyo 2020 - were acquired and paired with individual career progression data for every athlete who has competed during this span. Career progression is defined as the top performances of an athlete in an event discipline from year to year throughout their career. This comprehensive data set was then curated to identify and extract key factors and appropriately scale performances. This is important because for Track events, one where the outcome is timed, lower is better, while for Field events, performances of larger magnitudes are preferred. For convenience, athletes who competed in multiple individual events were separated into independent observations. The analysis in this work was performed using various packages from the [R programming language](https://www.r-project.org) and is completely reproducible, with source code located at [https://bit.ly/3JTBlK5](https://bit.ly/3JTBlK5).
+#   game                 number_of_athletes
+#   <chr>                             <int>
+# 1 1996 Summer Olympics               2089
+# 2 2000 Summer Olympics               2164
+# 3 2004 Summer Olympics               2109
+# 4 2008 Summer Olympics               2156
+# 5 2012 Summer Olympics               2097
+# 6 2016 Summer Olympics               2282
+# 7 2020 Summer Olympics               2012
+
+```
+
+### <span style="color: `r theme_color`;">Data</span> 
+The data for this analysis comes courtesy of [World Athletics](https://worldathletics.org), the world governing authority for athletics. 
+Complete event results from the past 7 Olympic games - from Atlanta 1996 to Tokyo 2020 - were acquired and paired with individual career progression data for every athlete who has competed during this span. 
+Career progression is defined as the top performances of an athlete in an event discipline from year to year throughout their career. 
+This comprehensive data set was then curated to identify and extract key factors and appropriately scale performances. 
+This is important because for *Track* events, one where the outcome is timed, lower is better, while for *Field* events, performances of larger magnitudes are preferred. 
+For convenience, athletes who competed in multiple individual events were separated into independent observations. 
+The analysis in this work was performed using various packages from the [R programming language](https://www.r-project.org) and is completely reproducible, with source code located at [https://bit.ly/3JTBlK5](https://bit.ly/3JTBlK5).
+
+```{r data_preprocessing, message=FALSE}
+
+# get results data from past Olympics and perform data preprocessing
+
+olympics_results <- read_csv("olympics_data.csv", show_col_types = F) %>%
+  janitor::clean_names() %>% 
+  separate_wider_delim(date, delim = "–", names = c("start", "end")) %>%
+  separate_wider_delim(cols = event, names = c("gender", "event"), delim = " ",
+                           too_many = "merge") %>%
+  filter(str_detect(event, "Wheelchair", negate = T)) %>% 
+  mutate(
+        # Manually fixed Aminata CAMARA's age
+    birth_date = if_else(name == "Aminata CAMARA", "06 DEC 1973", birth_date),
+    gender = if_else(gender == "Men's", "Men", "Women"),
+    across(c(birth_date, end),  ~as.Date(format(
+    as.Date(., format = "%d %b %Y"), "%Y-%m-%d"))),
+    age = year(end) - year(birth_date),
+         games = factor(games, ordered = T,
+                        levels = c("The XXXII Olympic Games",
+                                   "The XXXI Olympic Games",
+                                   "The XXX Olympic Games",
+                                   "The XXIX Olympic Games",
+                                   "The XXVIII Olympic Games",
+                                   "The XXVII Olympic Games",
+                                   "The XXVI Olympic Games"
+                        ),
+                        labels = c("Tokyo '20", "Rio '16", "London '12", 
+                                   "Beijing '08", "Athens '04", "Sydney '00",
+                                   "Atlanta '96")),
+    event_type = case_match(
+      event,
+      c("100 Metres", "200 Metres", "400 Metres", "400 Metres Hurdles", "100 Metres Hurdles", "110 Metres Hurdles") ~ "Sprints",
+      c("800 Metres", "1500 Metres", "3000 Metres Steeplechase") ~ "Middle Distance",
+      c("5000 Metres", "10,000 Metres") ~ "Long Distance",
+      c("Heptathlon", "Decathlon") ~ "Combined Events",
+      c("High Jump", "Long Jump", "Triple Jump", "Pole Vault") ~ "Jumps",
+      c("Shot Put", "Discus Throw", "Hammer Throw", "Javelin Throw", "Javelin Throw (old)") ~ "Throws",
+      c("10 Kilometres Race Walk", "20 Kilometres Race Walk", "50 Kilometres Race Walk", "Marathon") ~ "Road Races",
+      .default = "Other"
+    ),
+         event_category = if_else(str_detect(event, "Metres|Walk|Wheelchair") |event %in% c("Marathon"), "Track", "Field")
+         ) %>% 
+  mutate(event = if_else(event == "Javelin Throw (old)", "Javelin Throw", event),
+         games_year = year(end)) %>% rename("nationality" = nat)
+
+# load career progression data and identify athletes who are still active
+progression <- read_csv("career_progression.csv", show_col_types = F) %>% 
+  mutate(date = parse_date_time(date, orders = c("%d %b %Y", "%d-%b-%y"))) %>%
+  mutate(retired = if_else(max(year) <= 2022, T, F),
+         training_age = year - min(year) + 1,
+         .by = c("athlete_link", "event")) 
+
+# find the seasons best performances of each athlete
+athlete_bests <-
+  progression %>%  inner_join(
+    olympics_results %>%  filter(!is.na(birth_date)) %>%
+      distinct(birth_date, athlete_links, event, event_type, .keep_all = T) %>%
+      select(name, birth_date, athlete_links, event, nationality, event_type, 
+             event_category, gender, games_year),
+    by = c("athlete_link" = "athlete_links", "event")
+  ) %>%  
+  mutate(age_years = year(date) - year(birth_date), 
+         age_days = as.double(
+           difftime(
+             date, birth_date,units = "days"
+           )
+         ),
+         performance = str_remove_all(performance, "h") # I will count hand timed results as legitimate
+         ) %>%
+    mutate(mark = if_else(
+      event_category == "Track",
+      as.numeric(
+        difftime(
+          lubridate::parse_date_time2(performance, orders = c("%H:%M:%S", "%M:%S:00", "%M:%OS", "%OS"), exact = T),
+          lubridate::parse_date_time2("0", orders ="S"),
+          units = "secs"
+        )
+      ), parse_number(performance)),
+            
+      # the below accounts for edge cases that lubridate can't parse, like a 62s 400MH
+      mark = if_else(is.na(mark), parse_number(performance), mark)
+      ) %>%
+    mutate(
+      best_performance = case_when(
+        event_category == "Track" & mark == min(mark, na.rm = T) ~ T, # we want the lowest time
+        event_category == "Field" & mark == max(mark, na.rm = T) ~ T, # we want the furthest/highest performance
+        .default = F
+      ),
+      percent_off_peak = if_else(event_category == "Track", abs((mark - min(mark, na.rm = T))/mark), 
+                                 abs((mark - max(mark, na.rm = T))/mark)),
+      olympic_year = if_else(year %in% c(seq(1980, 2016, 4), 2021), T, F),
+      .by = c("athlete_link", "event")
+    ) %>% 
+  # remove duplicate seasons bests
+  slice_max(with_ties = F, n = 1, order_by = age_days, by = c("event", "year",  "athlete_link"))
+
+# Extract the personal bests of each athlete and prepare the data for survival analysis
+athlete_peaks <- athlete_bests %>%
+  filter(best_performance) %>% 
+    slice_max(with_ties = F, order_by = age_days, by = c("event", "athlete_link")) %>% 
+  mutate(
+    age_surv = Surv(age_years, retired == T),
+    age_days_surv = Surv(age_days, retired == T),
+  ) %>% 
+  mutate(across(c(nationality, gender, event_type, event_category, olympic_year), factor))
+```
  
-### A Matter of Survival
-Now that we are warmed up, we can go into more detail about the main engine used to investigate an athlete’s peak window in this work - survival analysis. As can also be inferred by its name, survival analysis originated in studies of mortality among different demographics. Its applications have since been generalized to study terminal events and the time until that event takes place. In medical contexts, for example, survival analysis is used to compare the observed time to cure a disease in clinical trials between different treatments, and in industry, as the time until a specific machinery component fails. Our question is framed as “time until an athlete peaks”, where time is measured in years - the athlete’s age. A key feature that distinguishes survival analysis from other methods is that the event of interest is not guaranteed to be observed in every entity when a study is completed. Therefore, special techniques are utilized to appropriately account for these types of observations. In our situation, an athlete’s peak cannot be definitively identified until their career has come to an end, so the active athletes in this data set are **censored** - given a special label to acknowledge their status. Since it is unfeasible to manually validate the competing status of each athlete, a `RETIRED` label is given to athletes who do not have a recorded performance after December 31, 2022. This definition falls short in edge cases where an athlete takes extended time off due to childbirth, a major injury, or to serve a suspension, for example, but the proportion of such athletes is likely miniscule. 
+### <span style="color: `r theme_color`;">A Matter of Survival</span> 
+Now that we are warmed up, we can go into more detail about the main engine used to investigate an athlete’s peak window in this work - *survival analysis*. As can also be inferred by its name, survival analysis originated in studies of mortality among different demographics. Its applications have since been generalized to study terminal events and the time until that event takes place. In medical contexts, for example, survival analysis is used to compare the observed time to cure a disease in clinical trials between different treatments, and in industry, as the time until a specific machinery component fails. Our question is framed as “*time until an athlete peaks*”, where time is measured in years - the athlete’s age. A key feature that distinguishes survival analysis from other methods is that the event of interest is not guaranteed to be observed in every entity when a study is completed. Therefore, special techniques are utilized to appropriately account for these types of observations. In our situation, an athlete’s peak cannot be definitively identified until their career has come to an end, so the active athletes in this data set are **censored** - given a special label to acknowledge their status. Since it is unfeasible to manually validate the competing status of each athlete, a **`RETIRED`** label is given to athletes who do not have a recorded performance after December 31, 2022. This definition falls short in edge cases where an athlete takes extended time off due to childbirth, a major injury, or to serve a suspension, for example, but the proportion of such athletes is likely miniscule. 
 
-### Babe Wake Up, it's an Olympic Year
-It has been demonstrated that the ages of athletes at the Olympics in other sports such as [gymnastics](https://themedalcount.com/2020/01/18/a-history-of-the-average-age-in-womens-gymnastics/) have experienced noticeable changes over time. However, things have been remarkably consistent over the past 25 years in athletics, where the average age of just under 27 years old has displayed just 2 months of variation between Games. The lone notable exception to this trend was Tokyo 2020, where the mean age of 27.6 years old is readily explained away by the 1 year delay of the Games due to the Covid-19 pandemic. The overall mean ages are surprisingly similar between men and women as well (26.9 years old), though the median age of women is slightly higher (27 to 26). Finalists were on average 16 months older than the average participant, but medalists were only 1 month older than average. The standout example here was the 2008 Beijing Olympics, which recorded the lowest average medalist age of 26.1 years old. It is no coincidence that medalists from this Games included then-young track legends Usain Bolt (22 years old), Shelly-Ann Fraser-Pryce (22 years old), and Allyson Felix (23 years old).
+```{r gender_summary_statistics}
+gender_ages_summary_statistics <- 
+olympics_results %>% group_by(games) %>%  distinct(athlete_links, .keep_all = T) %>% 
+  ungroup() %>% 
+  summarise(mean = mean(age, na.rm = T), median = median(age, na.rm = T), 
+            sd = sd(age, na.rm = T), .by = "gender")
 
-Median values are typically used in place of averages in survival analysis because censored data are usually not normally distributed. From the observed data, the median peak age is 27 years old, and this is illustrated visually via a simple **Kaplan-Meier** curve*, where the probability of an athlete peaking dips under 50% for the first time after they turn 27. The uncertainty estimates of these predictions are less than +/- 1% on average and can be viewed within the magnified portion of the visualization below. 
+average_age <- olympics_results %>% group_by(games) %>%  
+  distinct(athlete_links, .keep_all = T) %>% ungroup() %>% pull(age) %>% mean(na.rm = T)
 
-<!-- insert graph 1 here -->
+average_finalist_age <- olympics_results %>% group_by(games) %>%  
+  distinct(athlete_links, .keep_all = T) %>% ungroup() %>% 
+  filter(str_detect(event_meta, "Final")) %>% 
+  summarise(mean = mean(age, na.rm = T)) %>% pull()
 
-This result is both unsurprising and remarkable, as it implies that Olympic athletes are typically in their prime when they compete. In fact, we see some indications of a relationship between the relative peaks in athlete performance and the years of Olympic Games, as the difference between an athlete’s proximity from their career best in Olympic years versus non Olympic years is statistically significant. Although we have neither established the methodology necessary for appropriate causal analysis nor considered other factors such as injuries and World Championships, these preliminary results match our intuition about the incentive that the Games provide. A contemporary example of this phenomena is Tokyo 2020 Olympic Champion Andre DeGrasse, whose performance in the 200m dash seems to follow a cyclical pattern in line with the occurrence of Olympic Games.
+average_medalist_age <- olympics_results %>% 
+  #group_by(games) %>% distinct(athlete_links, .keep_all = T) %>% ungroup() %>% 
+  filter(str_detect(event_meta, "Final"), place %in% c(1:3)) %>% 
+  summarise(mean = mean(age, na.rm = T)) %>% pull()
+  
+```
 
-<!-- insert graph 2 here -->
+### <span style="color: `r theme_color`;">Babe Wake Up, it's an Olympic Year</span> 
+It has been demonstrated that the ages of athletes at the Olympics in other sports such as [gymnastics](https://themedalcount.com/2020/01/18/a-history-of-the-average-age-in-womens-gymnastics/) have experienced noticeable changes over time. However, things have been remarkably consistent over the past 25 years in athletics, where the average age of just under `r round(average_age)` years old has displayed just `r olympics_results %>% group_by(games) %>%  distinct(athlete_links, .keep_all = T) %>% summarise(mean = mean(age, na.rm = T)) %>% filter(games != "Tokyo '20") %>% pull(mean) %>% range() %>% {diff(.) * 12} %>% round()` months of variation between Games. 
+The lone notable exception to this trend was Tokyo 2020, where the mean age of
+`r olympics_results %>% filter(games == "Tokyo '20") %>% distinct(athlete_links, .keep_all = T) %>% pull(age) %>%  mean(na.rm = T) %>% round(1)` years old is readily explained away by the 1 year delay of the Games due to the Covid-19 pandemic. The overall mean ages are surprisingly similar between men and women as well (`r gender_ages_summary_statistics %>% pull(mean) %>% round(1) %>% unique()` years old), though the median age of women is slightly higher (`r gender_ages_summary_statistics %>% filter(gender == "Women") %>% pull(median)` to 
+`r gender_ages_summary_statistics %>% filter(gender == "Men") %>% pull(median)`). Finalists were on average
+`r (average_finalist_age - average_age)*12 %>% round()` months older than the average participant, but medalists were only 
+`r (average_medalist_age - average_age)*12 %>% round()` month older than average. The standout example here was the 2008 Beijing Olympics, which recorded the lowest average medalist age of 
+`r olympics_results %>% filter(games == "Beijing '08", str_detect(event_meta, "Final"), place %in% c(1:3)) %>% pull(age) %>% mean(na.rm = T) %>% round(1)` years old. It is no coincidence that medalists from this Games included then-young track legends Usain Bolt (22 years old), Shelly-Ann Fraser-Pryce (22 years old), and Allyson Felix (23 years old).
+```{r km_curve}
+km_curve <- survfit(age_surv ~ 1, data = athlete_peaks)
+```
+Median values are typically used in place of averages in survival analysis because censored data are usually not normally distributed. From the observed data, the median peak age is `r km_curve %>% summary() %>% pluck("table", "median")` years old, and this is illustrated visually via a simple **Kaplan-Meier** curve*, where the probability of an athlete peaking dips under 50% for the first time after they turn 27. The uncertainty estimates of these predictions are less than +/- 
+`r {mean(abs(km_curve$lower - km_curve$upper))* 100 }%>% round()`% on average and can be viewed within the magnified portion of the visualization below. 
 
-### Predicting the Peak
+```{r kaplan_meier, message=FALSE}
+   km_curve %>% 
+  ggsurvfit() + 
+  add_confidence_interval() + 
+  xlab("Age") + ylab("Probability of Peaking After A Given Age") + 
+  geom_point(aes(x = 27, y = 0.43857), size = 2, color = theme_color) + 
+  scale_y_continuous(labels = scales::percent) + 
+    geom_segment(aes(x = 27, y = -Inf, xend = 27, yend = 0.43857), color = theme_color, linetype = "dashed" ) + 
+    geom_segment(aes(x = -Inf, y = 0.43857, xend = 27, yend = 0.43857), color = theme_color, linetype = "dashed" ) + 
+    scale_x_continuous(breaks = c(seq(0, 20, 10), 27, seq(30, 50, 10)) , labels = as.character(c(seq(0, 20, 10), 27, seq(30, 50, 10)))) + 
+    scale_y_continuous(breaks = c(0, 0.25, 0.44, 0.50, 0.75, 1), labels = scales::percent) + 
+  theme(panel.grid.minor.y = element_blank(), 
+        panel.grid.minor.x = element_blank(),
+         axis.text.x = element_text(
+           face = ifelse(athlete_peaks$age_years ==27, "bold", "plain"),
+           ),
+        axis.text.y = element_text(
+          face = c(rep("plain", 2), "bold", rep("plain", 2))
+        )
+        ) +
+  labs(caption = str_wrap("*A Kaplan-Meier curve allows us to estimate the
+probability that an athlete will peak after a given age. 
+We use the curve by selecting a point of interest
+from the horizontal axis and locating the 
+associated probability on the vertical axis.
+For example, the probability that an athlete peaks
+after 27 years old is 44%.", width = 125)) + 
+  ggmagnify::geom_magnify(from = c(xmin = 26, xmax = 29, ymin = 0.34, ymax = 0.54), 
+                             to = c(xmin = 35, xmax = 45, ymin = 0.45, ymax = 0.95))
+```
+```{r percent_off_peak}
+olympic_year_marks <- athlete_bests %>% filter(olympic_year) %>% pull(percent_off_peak)
+non_olympic_year_marks <- athlete_bests %>% filter(!olympic_year) %>% pull(percent_off_peak)
+ttest_results <- t.test(olympic_year_marks, non_olympic_year_marks)
+#t = -17.767, df = 60420, p-value < 2.2e-16
+```
+
+This result is both unsurprising and remarkable, as it implies that Olympic athletes are typically in their prime when they compete. In fact, we see some indications of a relationship between the relative peaks in athlete performance and the years of Olympic Games, as the difference between an athlete’s proximity from their career best in Olympic years versus non Olympic years is statistically significant. Although we have neither established the methodology necessary for appropriate causal analysis nor considered other factors such as injuries and World Championships, these preliminary results match our intuition about the incentive that the Games provide. A contemporary example of this phenomena is Tokyo 2020 Olympic Champion Andre De Grasse, whose performance in the 200m dash seems to follow a cyclical pattern in line with the occurrence of Olympic Games.
+
+```{r andre_de_grasse}
+  athlete_bests %>%
+  distinct(.keep_all = T) %>%
+  filter(str_detect(athlete_link, "andre-de-grasse"), 
+         event == "200 Metres") %>%
+  mutate(athlete = str_to_title(str_trim(str_replace_all(str_remove_all(str_extract(athlete_link, "[^/]+$"), "[0-9]"), "-", " ")))) %>% 
+  ggplot(aes(x = age_years, y = mark)) + 
+  geom_line() + geom_point(aes(color = olympic_year), size = 2, show.legend = F) + 
+  xlab("Age") + 
+  annotate("label", x = 22, y = 20.62, label = "Rio 2016", fontface = "bold", color = "white",  fill = theme_color) + 
+  annotate("label", x = 27, y = 20.62, label = "Tokyo 2020", fontface = "bold", color = "white", fill = theme_color) + 
+  ylab("Performance (s)") + 
+  scale_color_manual(values = c("black", theme_color)) + 
+  theme(panel.grid.major = element_blank()) +
+  labs(caption = str_wrap("The career performance progression of Canadian sprinter Andre De Grasse in the 200m", width = 100))
+
+```
+
+### <span style="color: `r theme_color`;">Predicting the Peak</span> 
 Unlike similar analyses that investigate athlete peaks from the lens of [summary statistics](https://cepar.edu.au/sites/default/files/peak-performance-age-sport.pdf) and their [confidence intervals](https://air.unimi.it/bitstream/2434/655133/2/1-s2.0-S1440244018305565-main%20%281%29.pdf), our approach allows us to build a model to identify certain factors that might predict an athlete’s peak. A simple set of features was used in our final model, namely `gender`,  `nationality`, `event type` , a binary `olympic year` variable, and `training age`. Training age is estimated as the number of years that an athlete has recorded an event performance at a World Athletics-sanctioned meet. The rationale behind its inclusion is to try and capture the level of technical experience that an athlete has in their event. This allows for differentiation between “late bloomers” (older athletes with a small training age) and “child prodigies” (younger athletes with a large training age). The selected model was an **oblique random survival forest**, which is an ensemble machine learning technique for [modeling censored data](https://www.tandfonline.com/doi/full/10.1080/10618600.2023.2231048).
 
-<!-- insert graph 3 here -->
+```{r modeling, message=FALSE'}
+
+## This chunk trains a model and takes 15ish minutes to run
+
+# split data into training, validation, and test splits
+
+set.seed(1)
+peaks_split <- initial_validation_split(athlete_peaks)
+peaks_train <- training(peaks_split)
+peaks_rset <- validation_set(peaks_split)
+
+
+
+model_recipe <- recipe(age_surv ~ nationality + gender + event_type + 
+                      olympic_year + training_age, data = athlete_peaks) %>% 
+  step_novel(nationality) %>% 
+  step_other(nationality, threshold = 0.001)
+
+survival_metrics <- metric_set(brier_survival_integrated)
+evaluation_time_points <- seq(0, 40, 1)
+
+oblique_rsf <- rand_forest(mtry = tune(), min_n = tune()) %>% 
+  set_engine("aorsf") %>% 
+  set_mode("censored regression")
+
+oblique_wflow <- workflow() %>% 
+  add_recipe(model_recipe) %>% 
+  add_model(oblique_rsf)
+
+set.seed(1)
+oblique_tuned <- tune_grid(
+  oblique_wflow,
+  resamples = peaks_rset,
+  grid = 10,
+  metrics = survival_metrics,
+  eval_time = evaluation_time_points, 
+  control = control_grid(save_workflow = TRUE)
+)
+
+param_best <- select_best(oblique_tuned, metric = "brier_survival_integrated")
+last_oblique_wflow <- finalize_workflow(oblique_wflow, param_best)
+
+set.seed(2)
+final_model <- 
+last_oblique_fit <- last_fit(
+  last_oblique_wflow, 
+  split = peaks_split,
+  metrics = survival_metrics,
+  eval_time = evaluation_time_points, 
+)
+
+osrf_model <- final_model %>% extract_fit_engine() 
+
+osrf_model %>% orsf_vi() %>% enframe() %>% 
+  mutate(name = case_match(name, "event_type" ~ "event_category", .default = name),
+    name = str_to_title(str_replace_all(name, "\\_", " "))) %>% 
+  ggplot(aes(x = reorder(name, value), y = value, label = round(value, 3))) +
+  geom_col(fill = theme_color, color = "black") + coord_flip() + 
+  ylab("Variable Importance") + xlab("") + 
+  geom_text(position = position_dodge(width = 0.7),  hjust = 1.5,
+            size = 6, fontface = "bold", color = "white") + theme_minimal() + 
+  theme(panel.grid = element_blank(), axis.text.x = element_blank())
+
+predictions <- athlete_peaks %>% bind_cols(
+predict(extract_workflow(final_model), new_data = athlete_peaks, type = "time"))
+
+# importance of each individual factor
+raw_importances <- osrf_model$get_importance_raw()
+
+# nationality_ANA            0.30246914
+# nationality_ANG            0.49655963
+# nationality_ANT            0.41107561
+# nationality_ARG            0.08626974
+# nationality_ARM            0.29596043
+# nationality_AUS            0.13284542
+# nationality_AUT            0.06054054
+# nationality_BAH            0.18263091
+# nationality_BAR            0.36617647
+# nationality_BDI            0.12105649
+# nationality_BEL            0.09867302
+# nationality_BEN            0.20863309
+# nationality_BIH            0.20762368
+# nationality_BIZ            0.03293173
+# nationality_BLR            0.16431048
+# nationality_BOL            0.12651822
+# nationality_BOT            0.13888889
+# nationality_BRA            0.09014455
+# nationality_BRN            0.20597484
+# nationality_BUL            0.11041504
+# nationality_BUR            0.22024867
+# nationality_CAN            0.14505713
+# nationality_CHI            0.07945205
+# nationality_CHN            0.46382008
+# nationality_CIV            0.12930012
+# nationality_CMR            0.06781116
+# nationality_COD            0.23294347
+# nationality_COL            0.11930406
+# nationality_COM            0.59965338
+# nationality_CRO            0.16414380
+# nationality_CUB            0.33816254
+# nationality_CYP            0.25976331
+# nationality_CZE            0.21483516
+# nationality_DEN            0.10368066
+# nationality_DJI            0.45828437
+# nationality_DMA            0.10714286
+# nationality_DOM            0.07887050
+# nationality_ECU            0.20227729
+# nationality_EGY            0.09012464
+# nationality_ERI            0.50350740
+# nationality_ESP            0.19288974
+# nationality_EST            0.11904048
+# nationality_ETH            0.48817803
+# nationality_FIN            0.30233393
+# nationality_FRA            0.16209538
+# nationality_GAM            0.17532468
+# nationality_GBR            0.10910224
+# nationality_GEO            0.17791971
+# nationality_GEQ            0.13824289
+# nationality_GER            0.13518036
+# nationality_GHA            0.17904903
+# nationality_GRE            0.09355346
+# nationality_GRN            0.17686505
+# nationality_GUA            0.16629956
+# nationality_GUY            0.36976744
+# nationality_HAI            0.20880682
+# nationality_HUN            0.23839261
+# nationality_INA            0.12104539
+# nationality_IND            0.14355742
+# nationality_IRI            0.04350000
+# nationality_IRL            0.08529309
+# nationality_ISL            0.04084321
+# nationality_ISR            0.16094822
+# nationality_ISV            0.18492550
+# nationality_ITA            0.11695906
+# nationality_JAM            0.13322684
+# nationality_JPN            0.15293822
+# nationality_KAZ            0.13690249
+# nationality_KEN            0.16788786
+# nationality_KGZ            0.07360097
+# nationality_KOR            0.30062167
+# nationality_KSA            0.18915867
+# nationality_LAT            0.20285610
+# nationality_LBR            0.29656420
+# nationality_LTU            0.12682265
+# nationality_MAR            0.08541915
+# nationality_MAS            0.35132483
+# nationality_MDA            0.08248848
+# nationality_MDV            0.41901408
+# nationality_MEX            0.16091954
+# nationality_MRI            0.13327815
+# nationality_NAM            0.19320388
+# nationality_NED            0.15542099
+# nationality_NEP            0.20989761
+# nationality_NGR            0.35913140
+# nationality_NIG            0.41731266
+# nationality_NOR            0.15158205
+# nationality_NZL            0.12227205
+# nationality_PER            0.10517928
+# nationality_PHI            0.05226481
+# nationality_PLE            0.64692483
+# nationality_POL            0.16282565
+# nationality_POR            0.13096382
+# nationality_PRK            0.63648124
+# nationality_PUR            0.14262691
+# nationality_QAT            0.48075669
+# nationality_ROU            0.12641815
+# nationality_RSA            0.15978129
+# nationality_RUS            0.26316995
+# nationality_RWA            0.27359390
+# nationality_SEN            0.07671602
+# nationality_SEY            0.79753086
+# nationality_SGP            0.19226638
+# nationality_SKN            0.10806916
+# nationality_SLE            0.33333333
+# nationality_SLO            0.15359207
+# nationality_SOL            0.20404040
+# nationality_SOM            0.73856209
+# nationality_SRB            0.10561566
+# nationality_SRI            0.01258389
+# nationality_SUD            0.69534556
+# nationality_SUI            0.10592402
+# nationality_SVK            0.08942116
+# nationality_SWE            0.21133231
+# nationality_SYR            0.23487179
+# nationality_TAN            0.26851852
+# nationality_THA            0.07488208
+# nationality_TPE            0.13978495
+# nationality_TTO            0.09236146
+# nationality_TUN            0.08289125
+# nationality_TUR            0.14756944
+# nationality_UGA            0.18332348
+# nationality_UKR            0.10040939
+# nationality_URU            0.32490272
+# nationality_USA            0.17382114
+# nationality_UZB            0.08991009
+# nationality_VEN            0.17115689
+# nationality_VIE            0.34642032
+# nationality_YUG            0.19540230
+# nationality_ZAM            0.08198284
+# nationality_ZIM            0.05366207
+# nationality_other          0.17919206
+# gender_Women               0.13930261
+# event_type_Jumps           0.17778790
+# event_type_Long Distance   0.20358573
+# event_type_Middle Distance 0.18688407
+# event_type_Road Races      0.44538962
+# event_type_Sprints         0.21867361
+# event_type_Throws          0.17112049
+# olympic_year_TRUE          0.11077883
+# training_age               0.52712298
+
+kim_collins_100 <- 
+predictions %>% mutate(age_diff = .pred_time - age_years) %>%
+  filter(str_detect(athlete_link, "kim-collins"), event == "100 Metres") %>%
+  select(event, performance, age_years, .pred_time, age_diff) 
+
+# correlation between training age and age of peak performance among retired athletes
+age_correlations <- 
+cor(athlete_peaks %>% filter(retired) %>% pull(training_age),  athlete_peaks %>% 
+      filter(retired) %>% pull(age_years))
+# 0.45
+
+
+# career lengths in different event disciplines
+average_career_lengths <- athlete_bests %>% 
+  slice_max(n = 1, with_ties = F, order_by = training_age, by = c(athlete_link, event)) %>% 
+  summarise(avg_career_length = mean(training_age), .by = "event_type")
+
+# A tibble: 7 × 2
+#   event_type      avg_career_length
+#   <chr>                       <dbl>
+# 1 Sprints                     11.6 
+# 2 Road Races                  10.0 
+# 3 Middle Distance             11.5 
+# 4 Jumps                       13.6 
+# 5 Long Distance                9.89
+# 6 Throws                      13.9 
+# 7 Combined Events             10.7 
+
+```
 
 Now, we can analyze the contribution of each feature to the model via its **variable importance**, which in this context is the proportion of times that a variable has a statistically significant p-value when used in predictions. We see that `training age` is the most useful predictor of an athlete’s peak from our feature set. This could be explained partially by the fact that it demonstrates some correlation with actual age, but also matches our intuition that “experience” does help predict peaks. `Event category` has the second-highest relative influence, and its overall score is computed as the average of the magnitudes from its subcategories. Here, we see that the peaks of road racers are the “easiest” to predict, while the peaks of throwers are the most difficult. We hypothesize that the trend of older peaks in road racers improves the accuracy of model predictions, while finding out that Olympic throwers in our data set average the longest careers out of any event type may explain why peak age prediction is increasingly challenging for that event. The relative importance of `nationality` comes as a bit of a surprise, though we speculate that it requires further decomposition in order to make inferences on its various subcomponents. `Gender` has the second smallest variable importance of the feature set, and the predicted differences in example tests is quite small. Finally, we find evidence that knowledge of an `Olympic year` does indeed help predict if an athlete will peak, though this is by far the least impactful piece of information provided.
 
-### The Curious Case of Kim Collins
-Differences between predicted values and the realized data can be interpreted in terms of athletes who peak earlier or later than expected, which serves as an interesting case study. However, there is a lot of noise near the extreme values of this continuum, likely confounded by the unconventional means by which many of the identified athletes were selected for an Olympic Games. Filtering out this noise unearths a remarkable outlier, 5-time Olympian Kim Collins of St. Kitts and Nevis. The 2003 World Champion’s personal best in the 100m of 9.93 seconds came at age 40, a whopping 12 years after his predicted peak age of 28. This is tied for the second-oldest peak among non-road racers in the entire data set, trailing only Oleksandr Dryhol’s 79.42m hammer throw at the age of 46 - a mark set a few months before a retroactive ban from London 2012 for prohibited substance use. One thing to consider, however, is that the average retirement age for athletes in our data set is 32 years old. While this speaks volumes to Collins’ longevity, it also means that his peak is only comparable to a small subset of eligible athletes who were active at similar ages. Nevertheless, Collins’ career progression is particularly noteworthy because he seemingly experienced two primes, one between 2002 and 2005 (ages 26-29), and another from 2013 to 2016 (ages 37-40). In fact, each of Collins’ 4 best seasons came during the window of his “second prime”, as shown in the image below.
+```{r oldest_peaks}
+oldest_peaks <- 
+athlete_peaks %>% filter(event_type != "Road Races") %>% 
+  select(year, nationality, event, performance, name, age_years) %>%
+  mutate(rank  = rank(-age_years, ties.method = "min")) %>% 
+  arrange(rank) %>% filter(rank < 3)
 
-<!-- insert graph 4 here -->
+#    year nationality event         performance name               age_years  rank
+#   <dbl> <fct>       <chr>         <chr>       <chr>                  <dbl> <int>
+# 1  2012 UKR         Hammer Throw  79.42       Oleksandr DRYHOL          46     1
+# 2  2003 USA         1500 Metres   04:00.0     Regina JACOBS             40     2
+# 3  2016 SKN         100 Metres    9.93        Kim COLLINS               40     2
+# 4  2006 RUS         100 Metres    11.18       Irina KHABAROVA           40     2
+# 5  2007 MEX         10,000 Metres 31:56.61    Nora Leticia ROCHA        40     2
+# 6  2012 AZE         Hammer Throw  79.56       Dmitriy MARSHIN           40     2
 
-### Conclusion
+```
+
+### <span style="color: `r theme_color`;">The Curious Case of Kim Collins</span> 
+Differences between predicted values and the realized data can be interpreted in terms of athletes who peak earlier or later than expected, which serves as an interesting case study. However, there is a lot of noise near the extreme values of this continuum, likely confounded by the unconventional means by which many of the identified athletes were selected for an Olympic Games. Filtering out this noise unearths a remarkable outlier, 5-time Olympian Kim Collins of St. Kitts and Nevis. The 2003 World Champion’s personal best in the 100m of 9.93 seconds came at age 40, a whopping `r kim_collins_100 %>% pull(age_diff) %>% abs() %>% ceiling()` years after his predicted peak age of `r kim_collins_100 %>% pull(.pred_time) %>% floor()`. This is tied for the second-oldest peak among non-road racers in the entire data set, trailing only Oleksandr Dryhol’s 79.42m hammer throw at the age of 46 - a mark set a few months before a [retroactive ban from London 2012 for prohibited substance use](https://olympics.com/ioc/news/ioc-sanctions-12-athletes-for-failing-anti-doping-test-at-london-2012). One thing to consider, however, is that the average retirement age for athletes in our data set is 
+`r athlete_bests %>%  filter(retired) %>% slice_max(n = 1, with_ties = F, order_by = age_years, by = athlete_link) %>% pull(age_years) %>% mean() %>% round()` years old. While this speaks volumes to Collins’ longevity, it also means that his peak is only comparable to a small subset of eligible athletes who were active at similar ages. Nevertheless, Collins’ career progression is particularly noteworthy because he seemingly experienced two primes, one between 2002 and 2005 (ages 26-29), and another from 2013 to 2016 (ages 37-40). In fact, each of Collins’ 4 best seasons came during the window of his “second prime”, as shown in the image below.
+
+```{r kim_collins}
+
+athlete_bests %>%
+  filter(str_detect(athlete_link, "kim-collins"), event == "100 Metres", age_years> 21) %>%
+  mutate(career_type = if_else(year %in% c(2002:2005, 2013:2016), "prime", "normal")) %>% 
+  ggplot(aes(x = year, y = mark, label = age_years)) + 
+  annotate("label", x = 2003.5, y = 9.94, label = "Prime #1", fill = theme_color,
+           color = "white", fontface = "bold") +
+  annotate("label", x = 2014.5, y = 10.02, label = "Prime #2", color = "white", fill = theme_color, fontface = "bold") +
+  geom_line() + geom_point(aes( color = career_type), size = 7, show.legend = F) + 
+  geom_text(color = "white", fontface = "bold") + 
+  scale_y_continuous(labels = function(x) sprintf("%.2f", x), breaks = seq(9.90, 10.45, 0.05)) + 
+  xlab("Year") + ylab("Performance (s)") + 
+  scale_color_manual(values = c("black", theme_color)) + 
+  labs(caption = "The career progression of Kim Collins in the 100m from age 22 onwards") +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank())
+```
+
+### <span style="color: `r theme_color`;">Conclusion</span> 
 By leveraging survival analysis, we were able to make meaningful predictions about the age at which Olympic track and field athletes peak. We also find that the prime of a track and field athlete typically spans a single Olympic games, though some athletes such as Kim Collins seem to have experienced multiple windows. We found that the training age of an athlete was the most influential predictor of peak age, while the timing of the Olympics and the athlete’s nationality, event category, gender were less informative. This analysis is far from complete, and multiple areas for improvement have been identified. Firstly, including an additional feature to capture how an athlete qualifies for the Olympic Games, such as a proxy for the relative depth of an athlete’s NOC or their proximity to entry standards, could be incredibly valuable. Additionally, implementing a more rigorous methodological treatment to athletes who compete in multiple individual events may remove bias from the model. Further analysis on the rate of progression leading up to and following an athlete’s peak is another interesting extension of this work that could be used to identify athletes who have a slow and steady progression versus a sharp ascension followed by a rapid decline. By investigating these physiological and external factors, we gain a greater appreciation for the uphill battle that athletes face as they prepare themselves for what will most likely be their only chance at attaining Olympic glory.
 
-### Acknowledgement
-This work was made possible through collaboration within the University of Waterloo Analytics Group for Games and Sports (UWAGGS). A special thank you to member Rithika Silva for his extensive support acquiring the data.
+### <span style="color: `r theme_color`;">Acknowledgement</span> 
+This work was made possible through collaboration within the University of Waterloo Analytics Group for Games and Sports (UWAGGS). A special thank you to member [Rithika Silva](mailto:rithikasilva@outlook.com) for his extensive support acquiring the data.
