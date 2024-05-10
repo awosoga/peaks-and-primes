@@ -1,5 +1,5 @@
 
-# Peaks and Primes: Investigating an Olympic Athlete's Performance Progression in Athletics
+# Peaks and primes: Do athletes get one shot at glory?
 
 <!-- badges: start -->
 <!-- badges: end -->
